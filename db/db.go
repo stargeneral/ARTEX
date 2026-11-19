@@ -158,7 +158,7 @@ func ensureDatabase(dsn string) error {
 	_ = admin.QueryRow(`SELECT true FROM pg_database WHERE datname=$1`, dbName).Scan(&exists)
 	if !exists {
 		if _, err := admin.Exec(createDatabaseSQL(dbName)); err != nil {
-			return fmt.Errorf("create database %q: %w", dbName, err)
+			return errors.New("could not create the PostgreSQL database")
 		}
 	}
 	return nil
@@ -186,7 +186,7 @@ func openWithMigrations(dsn string, migrations fs.FS) (*DB, error) {
 	}
 	sqlDB, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("invalid PostgreSQL connection settings")
 	}
 	// database/sql does not limit connections by default: when the pool has no
 	// idle connection it unconditionally opens a new one, all the way up to
@@ -203,7 +203,7 @@ func openWithMigrations(dsn string, migrations fs.FS) (*DB, error) {
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 	if err := sqlDB.Ping(); err != nil {
 		sqlDB.Close()
-		return nil, fmt.Errorf("ping postgres (%s): %w", config.Redact(dsn), err)
+		return nil, errors.New("PostgreSQL connection failed; check connection settings and server availability")
 	}
 	d := &DB{sqlDB}
 	// pgx runs multi-statement Exec via the simple protocol when there are no args.

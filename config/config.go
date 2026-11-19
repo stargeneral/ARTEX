@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -210,14 +209,7 @@ func (d Database) buildDSN() string {
 	return u.String()
 }
 
-// libpqPassword matches a libpq keyword DSN password field, including quoted
-// values. pgx accepts this form as well as the URL form.
-var libpqPassword = regexp.MustCompile(`(?i)\b(password)\s*=\s*(?:'[^']*'|"[^"]*"|\S*)`)
-
-// Redact is a log-safe view of a PostgreSQL DSN. It masks URL userinfo
-// passwords, `?password=` query values, and libpq `password=` keywords.
-// Unrecognised input still runs the keyword mask so a parse failure cannot
-// print the secret.
+// Redact masks URL credentials and suppresses opaque or malformed connection strings.
 func Redact(dsn string) string {
 	if dsn == "" {
 		return dsn
@@ -235,5 +227,5 @@ func Redact(dsn string) string {
 		}
 		return u.String()
 	}
-	return libpqPassword.ReplaceAllString(dsn, `${1}=****`)
+	return "[redacted PostgreSQL settings]"
 }

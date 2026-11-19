@@ -1,0 +1,2 @@
+# GHSA-764m-3ppc-5m73: deny the two malicious releases.
+agent-framework!=1.26.1,!=1.26.2

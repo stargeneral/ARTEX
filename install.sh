@@ -25,19 +25,8 @@ ensure_docker(){
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     ok "docker and docker compose detected"; return
   fi
-  warn "docker / docker compose not detected"
-  case "$(uname -s)" in
-    Linux)
-      if [ "$(ask 'Install Docker automatically? (y/n)' y)" = y ]; then
-        curl -fsSL https://get.docker.com | sh
-        sudo usermod -aG docker "$USER" || true
-        ok "Docker installed (re-login required for the group change to take effect)"
-      else
-        die "please install docker yourself and retry"
-      fi ;;
-    Darwin) die "on macOS please install Docker Desktop: https://www.docker.com/products/docker-desktop/" ;;
-    *)      die "please install docker yourself and retry" ;;
-  esac
+  die "Install Docker and its Compose plugin from your approved package source, then retry."
+
 }
 
 # ── 1) All-Docker ───────────────────────────────

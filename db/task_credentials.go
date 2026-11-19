@@ -11,8 +11,7 @@ import (
 // by the agent itself and recorded so it is not forgotten (source=agent).
 //
 // Passwords are encrypted at rest (secrets.go) and masked by the HTTP API; the
-// agent tools read them decrypted. Anything injected into agent context transits to the LLM
-// provider, so only dedicated test accounts belong here.
+// model-facing queries select account identifiers only.
 type TaskCredential struct {
 	ID        int64     `json:"id"`
 	TaskID    int64     `json:"task_id"`
@@ -127,6 +126,27 @@ func (s *ExplorationStore) UpsertTaskCredential(taskID int64, in TaskCredentialI
 	return s.db.UpsertTaskCredential(taskID, in)
 }
 
-func (s *ExplorationStore) TaskCredentials(taskID int64) ([]TaskCredential, error) {
-	return s.db.TaskCredentials(taskID)
+// CredentialSummary is the only task account projection returned to model tools.
+type CredentialSummary struct {
+	ID       int64  `json:"id"`
+	Domain   string `json:"domain"`
+	Username string `json:"username"`
+	Source   string `json:"source"`
+}
+
+func (s *ExplorationStore) CredentialSummaries(taskID int64) ([]CredentialSummary, error) {
+	rows, err := s.db.Query(`SELECT id, domain, username, source FROM task_credentials WHERE task_id = $1 ORDER BY id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []CredentialSummary
+	for rows.Next() {
+		var c CredentialSummary
+		if err := rows.Scan(&c.ID, &c.Domain, &c.Username, &c.Source); err != nil {
+			return nil, err
+		}
+		result = append(result, c)
+	}
+	return result, rows.Err()
 }

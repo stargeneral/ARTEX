@@ -63,7 +63,7 @@ func (t *ToolSet) saveTaskCredential() actool.CoreTool {
 func (t *ToolSet) listTaskCredentials() actool.CoreTool {
 	return writeTool(
 		"list_task_credentials",
-		"List this task's test accounts: user-declared accounts (e.g. program-provided aliases; a user-declared entry with an empty password means: register an account on that domain with a strong password, then record it via save_task_credential) plus accounts recorded by earlier runs. Check this BEFORE registering a new account, and use matching entries for authenticated testing.",
+		"List this task's test accounts: user-declared accounts (e.g. program-provided aliases; a user-declared entry with an empty password means: register an account on that domain with a strong password, then record it via save_task_credential) plus accounts recorded by earlier runs. Check this BEFORE registering a new account, and only account identifiers are returned.",
 		obj(map[string]any{}),
 		func(_ context.Context, _ json.RawMessage) (actool.Result, error) {
 			if t.ts == nil {
@@ -78,7 +78,7 @@ func (t *ToolSet) listTaskCredentials() actool.CoreTool {
 				}
 				t.taskID = taskID
 			}
-			list, err := t.ts.TaskCredentials(taskID)
+			list, err := t.ts.CredentialSummaries(taskID)
 			if err != nil {
 				return actool.Errorf("list_task_credentials failed: " + err.Error()), nil
 			}
@@ -87,32 +87,14 @@ func (t *ToolSet) listTaskCredentials() actool.CoreTool {
 }
 
 // taskCredentialOverview renders the credentials block injected into the worker's
-// graph overview. Empty user-side passwords surface as an explicit instruction
-// (the agent generates and records one) rather than a half-entry.
-func (t *ToolSet) taskCredentialOverview() []map[string]any {
+// graph overview. Keep passwords and free-text notes outside the model context.
+func (t *ToolSet) taskCredentialOverview() []db.CredentialSummary {
 	if t.ts == nil || t.taskID <= 0 {
 		return nil
 	}
-	list, err := t.ts.TaskCredentials(t.taskID)
-	if err != nil || len(list) == 0 {
+	list, err := t.ts.CredentialSummaries(t.taskID)
+	if err != nil {
 		return nil
 	}
-	out := make([]map[string]any, 0, len(list))
-	for _, c := range list {
-		m := map[string]any{
-			"domain":   c.Domain,
-			"username": c.Username,
-			"source":   c.Source,
-		}
-		if c.Note != "" {
-			m["note"] = c.Note
-		}
-		if c.Password == "" {
-			m["instruction"] = "no password yet: register an account with this username on this domain (choose a strong unique password), then record it via save_task_credential"
-		} else {
-			m["password"] = c.Password
-		}
-		out = append(out, m)
-	}
-	return out
+	return list
 }

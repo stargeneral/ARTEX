@@ -1,16 +1,13 @@
 // ARTEX Traffic Capture — background service worker.
 //
 // Captures the network activity of one tab through the chrome.debugger API
-// (Network domain) and pushes text request/response pairs to the ARTEX
+// (Network domain) and pushes origin, method and status to the ARTEX
 // ingest endpoint in batches. State lives in chrome.storage.session so the
 // popup and the (short-lived) service worker share one view; the queue is
 // deliberately in-memory — a browser restart drops unsent entries, which is
 // the acceptable failure mode for a manual capture session.
 
 const FLUSH_AT = 10; // entries per batch
-const MAX_BODY = 256 * 1024; // matches the server-side ingest cap
-const SKIP_MIME = ["image/", "font/", "audio/", "video/", "application/octet-stream"];
-
 let session = {
   capturing: false,
   tabId: null,
@@ -34,7 +31,15 @@ async function saveState() {
 
 async function getConfig() {
   const { serverUrl = "", token = "" } = await chrome.storage.local.get(["serverUrl", "token"]);
-  return { serverUrl: serverUrl.replace(/\/+$/, ""), token };
+  try {
+    const url = new URL(serverUrl);
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if ((url.protocol === "https:" || (local && url.protocol === "http:")) &&
+        !url.username && !url.password && !url.search && !url.hash) {
+      return { serverUrl: url.href.replace(/\/+$/, ""), token };
+    }
+  } catch { /* Missing or invalid destination. */ }
+  return { serverUrl: "", token: "" };
 }
 
 async function getActiveTabId() {
@@ -80,58 +85,11 @@ async function stop() {
   return { ok: true };
 }
 
-function skipBody(mimeType) {
-  const mt = (mimeType || "").toLowerCase();
-  return SKIP_MIME.some((p) => mt.startsWith(p));
-}
-
-function truncate(s) {
-  if (s.length <= MAX_BODY) return s;
-  return s.slice(0, MAX_BODY) + "\n... [truncated by extension]";
-}
-
 async function queueExchange(info, response) {
-  const respHeaders = {};
-  // CDP hands back response.headers as a plain object (dict), not an array of
-  // {name,value} records; iterating it with for...of throws "object is not
-  // iterable" and no exchange is ever queued. Accept both shapes.
-  const rawHeaders = response.headers || {};
-  if (Array.isArray(rawHeaders)) {
-    for (const h of rawHeaders) {
-      if (h && h.name != null) respHeaders[String(h.name).toLowerCase()] = h.value;
-    }
-  } else {
-    for (const [k, v] of Object.entries(rawHeaders)) respHeaders[String(k).toLowerCase()] = v;
-  }
-  const mime = respHeaders["content-type"] || "";
-
-  let reqBody = info.postData || "";
-  let respBody = "";
-  if (!skipBody(mime)) {
-    try {
-      const body = await chrome.debugger.sendCommand(
-        { tabId: session.tabId },
-        "Network.getResponseBody",
-        { requestId: info.requestId }
-      );
-      if (body && !body.base64Encoded) {
-        reqBody = truncate(reqBody);
-        respBody = truncate(body.body || "");
-      }
-    } catch (_) {
-      // body already discarded by the browser; capture the pair without bodies
-    }
-  }
-
-  session.queue.push({
-    method: info.method,
-    url: info.url,
-    status: response.status || 0,
-    requestHeaders: info.headers || {},
-    requestBody: reqBody,
-    responseHeaders: respHeaders,
-    responseBody: respBody,
-  });
+  // Paths, queries, headers and bodies may all contain authentication material.
+  const url = new URL(info.url);
+  if (!["http:", "https:"].includes(url.protocol)) return;
+  session.queue.push({ method: info.method, url: url.origin, status: response.status || 0 });
   if (session.queue.length >= FLUSH_AT) await flush();
 }
 
@@ -147,6 +105,7 @@ async function flush() {
   try {
     const res = await fetch(`${serverUrl}/api/traffic/ingest`, {
       method: "POST",
+      redirect: "error",
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ exchanges: batch }),
     });
@@ -167,16 +126,17 @@ async function flush() {
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!session.capturing || !source.tabId || source.tabId !== session.tabId) return;
   if (method === "Network.requestWillBeSent") {
+    let origin;
+    try { origin = new URL(params.request.url).origin; } catch { return; }
+    if (!/^https?:\/\//.test(origin)) return;
     session.requests.set(params.requestId, {
       requestId: params.requestId,
       method: params.request.method,
-      url: params.request.url,
-      headers: params.request.headers,
-      postData: params.request.postData || "",
+      url: origin,
     });
   } else if (method === "Network.responseReceived") {
     const info = session.requests.get(params.requestId);
-    if (info) info.response = params.response;
+    if (info) info.response = { status: params.response.status };
   } else if (method === "Network.loadingFinished") {
     const info = session.requests.get(params.requestId);
     session.requests.delete(params.requestId);
